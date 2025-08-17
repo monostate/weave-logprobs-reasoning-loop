@@ -70,13 +70,14 @@ export OPENAI_API_KEY="your-api-key"
 
 If you encounter a `TypeError` when initializing Weave:
 ```bash
-# Fix gql library compatibility
-pip install --upgrade gql-core gql
-# Or use specific versions
-pip install gql==3.4.1 gql-core==3.2.3
+# Option 1: Install compatible gql version
+pip install gql==3.4.1
+
+# Option 2: Simply run the notebook - it will automatically handle the error
+# The notebook includes fallback handling and can run without W&B tracking
 ```
 
-The notebook includes fallback handling for Weave initialization issues and can run without W&B tracking if needed.
+The notebook is designed to run even if Weave initialization fails, so you can proceed with the uncertainty experiments regardless of tracking setup.
 
 ### Running the Notebook
 ```bash
