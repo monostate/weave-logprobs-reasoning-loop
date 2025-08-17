@@ -269,20 +269,20 @@ def answer_difficult_question_with_uncertainty(
 ):
     t0 = time.perf_counter()
     
-    # Reasoning models (o1, o4) don't support temperature parameter
+    # Reasoning models (o1, o4) don't support temperature or logprobs
     is_reasoning_model = model.startswith(('o1', 'o4'))
     
     create_params = {
         "model": model,
         "instructions": "You are a precise cryptography expert. Be concise and accurate.",
         "input": question,
-        "top_logprobs": top_k,
-        "include": ["message.output_text.logprobs"],
     }
     
-    # Only add temperature for non-reasoning models
+    # Only add temperature and logprobs for non-reasoning models
     if not is_reasoning_model:
         create_params["temperature"] = temperature
+        create_params["top_logprobs"] = top_k
+        create_params["include"] = ["message.output_text.logprobs"]
     
     resp1 = client.responses.create(**create_params)
 
@@ -297,7 +297,8 @@ def answer_difficult_question_with_uncertainty(
     ppx2 = None
     avg_lp2 = None
 
-    if ppx1 > threshold:
+    # Skip refinement for reasoning models (no logprobs available)
+    if ppx1 > threshold and not is_reasoning_model:
         did_refine = True
         analysis = _uncertainty_report(token_lps1, topk1, max_positions=5)
         refined_input = (
@@ -313,13 +314,13 @@ def answer_difficult_question_with_uncertainty(
             "model": model,
             "instructions": "You are a precise cryptography expert. Be concise and accurate.",
             "input": refined_input,
-            "top_logprobs": top_k,
-            "include": ["message.output_text.logprobs"],
         }
         
-        # Only add temperature for non-reasoning models
+        # Only add temperature and logprobs for non-reasoning models
         if not is_reasoning_model:
             refine_params["temperature"] = max(0.0, temperature - 0.1)
+            refine_params["top_logprobs"] = top_k
+            refine_params["include"] = ["message.output_text.logprobs"]
         
         resp2 = client.responses.create(**refine_params)
 

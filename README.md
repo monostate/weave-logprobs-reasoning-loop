@@ -24,7 +24,7 @@ We implement an **uncertainty-aware generation loop** that:
 
 ### Comparison
 - **Non-reasoning models with uncertainty loops** (e.g., GPT-4-mini with our framework)
-- **Native reasoning models** (e.g., o1-mini)
+- **Native reasoning models** (e.g., o4-mini) - Note: These don't expose logprobs, so uncertainty analysis is not available
 
 ### Metrics Tracked
 - Token-level perplexity
@@ -80,9 +80,10 @@ pip install gql==3.4.1
 
 **Reasoning Model Compatibility:**
 The code automatically handles differences between reasoning models (o1, o4) and standard models:
-- Reasoning models don't support the `temperature` parameter
-- The code detects model type and adjusts parameters accordingly
-- Both model types will work seamlessly
+- Reasoning models don't support `temperature` or `logprobs` parameters
+- The code detects model type and adjusts API calls accordingly
+- Reasoning models won't have uncertainty metrics or refinement loops (no logprobs available)
+- Both model types will run successfully for comparison purposes
 
 The notebook is designed to run even if Weave initialization fails, so you can proceed with the uncertainty experiments regardless of tracking setup.
 
