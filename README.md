@@ -68,6 +68,7 @@ export OPENAI_API_KEY="your-api-key"
 
 ### Troubleshooting
 
+**Weave Initialization Error:**
 If you encounter a `TypeError` when initializing Weave:
 ```bash
 # Option 1: Install compatible gql version
@@ -76,6 +77,12 @@ pip install gql==3.4.1
 # Option 2: Simply run the notebook - it will automatically handle the error
 # The notebook includes fallback handling and can run without W&B tracking
 ```
+
+**Reasoning Model Compatibility:**
+The code automatically handles differences between reasoning models (o1, o4) and standard models:
+- Reasoning models don't support the `temperature` parameter
+- The code detects model type and adjusts parameters accordingly
+- Both model types will work seamlessly
 
 The notebook is designed to run even if Weave initialization fails, so you can proceed with the uncertainty experiments regardless of tracking setup.
 

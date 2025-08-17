@@ -268,14 +268,23 @@ def answer_difficult_question_with_uncertainty(
     temperature: float = 0.2,
 ):
     t0 = time.perf_counter()
-    resp1 = client.responses.create(
-        model=model,
-        instructions="You are a precise cryptography expert. Be concise and accurate.",
-        input=question,
-        temperature=temperature,
-        top_logprobs=top_k,
-        include=["message.output_text.logprobs"],
-    )
+    
+    # Reasoning models (o1, o4) don't support temperature parameter
+    is_reasoning_model = model.startswith(('o1', 'o4'))
+    
+    create_params = {
+        "model": model,
+        "instructions": "You are a precise cryptography expert. Be concise and accurate.",
+        "input": question,
+        "top_logprobs": top_k,
+        "include": ["message.output_text.logprobs"],
+    }
+    
+    # Only add temperature for non-reasoning models
+    if not is_reasoning_model:
+        create_params["temperature"] = temperature
+    
+    resp1 = client.responses.create(**create_params)
 
     text1, token_lps1, topk1 = _extract_text_and_logprobs(resp1)
     in_tok1, out_tok1 = _extract_usage(resp1)
@@ -300,14 +309,19 @@ def answer_difficult_question_with_uncertainty(
             "Do not mention this analysis in the final answer."
         )
 
-        resp2 = client.responses.create(
-            model=model,
-            instructions="You are a precise cryptography expert. Be concise and accurate.",
-            input=refined_input,
-            temperature=max(0.0, temperature - 0.1),
-            top_logprobs=top_k,
-            include=["message.output_text.logprobs"],
-        )
+        refine_params = {
+            "model": model,
+            "instructions": "You are a precise cryptography expert. Be concise and accurate.",
+            "input": refined_input,
+            "top_logprobs": top_k,
+            "include": ["message.output_text.logprobs"],
+        }
+        
+        # Only add temperature for non-reasoning models
+        if not is_reasoning_model:
+            refine_params["temperature"] = max(0.0, temperature - 0.1)
+        
+        resp2 = client.responses.create(**refine_params)
 
         text2, token_lps2, _ = _extract_text_and_logprobs(resp2)
         in_tok2, out_tok2 = _extract_usage(resp2)
@@ -382,7 +396,7 @@ def answer_difficult_question_with_uncertainty(
             "estimated_cost_usd": estimated_cost_usd,
             "timing_seconds": t1 - t0,
         },
-        "model_kind": "non_reasoning",
+        "model_kind": "reasoning" if is_reasoning_model else "non_reasoning",
     }
 
 # %%
