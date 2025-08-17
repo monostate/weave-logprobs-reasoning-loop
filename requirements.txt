@@ -1,0 +1,15 @@
+# Core dependencies
+openai>=1.0.0
+weave>=0.50.0
+jupytext>=1.14.0
+
+# Optional for Colab/Kaggle environments
+set-env-colab-kaggle-dotenv>=0.1.0
+
+# For W&B integration (optional)
+wandb>=0.16.0
+
+# Note: If you encounter TypeError with weave.init(), try:
+# pip install --upgrade gql-core gql
+# or
+# pip install gql==3.4.1 gql-core==3.2.3

@@ -43,9 +43,31 @@ import time
 
 # %%
 import weave
+import os
 
 # %%
-weave.init(PROJECT)
+# Initialize Weave with error handling for compatibility issues
+try:
+    weave.init(PROJECT)
+    print(f"Weave initialized with project: {PROJECT}")
+except TypeError as e:
+    # Fallback for compatibility issues with gql library
+    print(f"Note: Weave initialization encountered an issue: {e}")
+    print("Attempting alternative initialization...")
+    try:
+        # Try with explicit entity/project format
+        import wandb
+        entity = os.environ.get("WANDB_ENTITY", wandb.api.default_entity())
+        if entity:
+            weave.init(f"{entity}/{PROJECT}")
+        else:
+            # Run without W&B integration
+            print("Running without full Weave tracking. Results will be local only.")
+            os.environ["WEAVE_DISABLED"] = "true"
+    except Exception as fallback_error:
+        print(f"Weave tracking disabled due to: {fallback_error}")
+        print("The notebook will run but without experiment tracking.")
+        os.environ["WEAVE_DISABLED"] = "true"
 
 # %%
 client = OpenAI()

@@ -62,9 +62,21 @@ def answer_difficult_question_with_uncertainty(
 
 ### Prerequisites
 ```bash
-pip install weave openai jupytext
+pip install -r requirements.txt
 export OPENAI_API_KEY="your-api-key"
 ```
+
+### Troubleshooting
+
+If you encounter a `TypeError` when initializing Weave:
+```bash
+# Fix gql library compatibility
+pip install --upgrade gql-core gql
+# Or use specific versions
+pip install gql==3.4.1 gql-core==3.2.3
+```
+
+The notebook includes fallback handling for Weave initialization issues and can run without W&B tracking if needed.
 
 ### Running the Notebook
 ```bash
