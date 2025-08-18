@@ -779,58 +779,57 @@ print(
 # Use the Weave UI links to explore traces, inputs/outputs, and compare iterations.
 
 # %%
-# Main execution block
-if __name__ == "__main__":
-    import sys
-    
-    # Check if running as a script (not in notebook)
-    if 'ipykernel' not in sys.modules:
-        print("Running uncertainty-aware generation analysis...\n")
-        
-        # Test with different types of questions
-        test_questions = [
-            "Is artificial general intelligence likely to be achieved by 2030?",  # Controversial prediction
-            "What are the ethical implications of human genetic enhancement?",  # Complex ethical question
-            "Should cryptocurrency replace traditional banking systems?",  # Controversial opinion
-        ]
-        
-        for question in test_questions:
-            print(f"\n{'='*60}")
-            print(f"Question: {question}")
-            print('='*60)
-            
-            # Run with non-reasoning model (uncertainty loop)
-            print("\n▶ GPT-4.1-mini with uncertainty loop:")
-            base_result = answer_difficult_question_with_uncertainty(
-                question,
-                model="gpt-4.1-mini",
-                top_k=5,
-                threshold=1.4,
-                temperature=0.2,
-            )
-            
-            print(f"  Answer: {base_result.get('final_answer', '')}")
-            print(f"  Perplexity: {base_result['first_pass'].get('perplexity', 'N/A'):.3f}")
-            print(f"  Refinement: {'✓ Triggered' if base_result['refinement']['enabled'] else '✗ Not needed'}")
-            print(f"  Cost: ${base_result['usage'].get('estimated_cost_usd', 0):.4f}")
-            
-            # Run with reasoning model for comparison
-            print("\n▶ o4-mini (reasoning model):")
-            reasoning_result = answer_difficult_question_with_uncertainty(
-                question,
-                model="o4-mini",
-                top_k=5,
-                threshold=1.4,
-                temperature=0.2,
-            )
-            
-            print(f"  Answer: {reasoning_result.get('final_answer', '')}")
-            print(f"  Cost: ${reasoning_result['usage'].get('estimated_cost_usd', 0):.4f}")
-            
-            # Compare efficiency
-            cost_ratio = base_result['usage'].get('estimated_cost_usd', 0) / reasoning_result['usage'].get('estimated_cost_usd', 1)
-            print(f"\n  💰 Cost efficiency: {cost_ratio:.1%} of reasoning model cost")
-        
-        print("\n" + "="*60)
-        print("✅ Check Weave UI for detailed analysis of logprobs and uncertainty metrics!")
-        print("="*60)
+# Test with a controversial question (runs in both notebook and script)
+print("Running uncertainty-aware generation test...\n")
+
+# Test question
+test_question = "Is artificial general intelligence likely to be achieved by 2030?"
+
+print(f"{'='*60}")
+print(f"Question: {test_question}")
+print('='*60)
+
+# Run with non-reasoning model (uncertainty loop)
+print("\n▶ GPT-4.1-mini with uncertainty loop:")
+base_result = answer_difficult_question_with_uncertainty(
+    test_question,
+    model="gpt-4.1-mini",
+    top_k=5,
+    threshold=1.4,
+    temperature=0.2,
+)
+
+# Truncate answer for display
+answer_preview = base_result.get('final_answer', '')[:300] + "..." if len(base_result.get('final_answer', '')) > 300 else base_result.get('final_answer', '')
+print(f"  Answer: {answer_preview}")
+print(f"  Perplexity: {base_result['first_pass'].get('perplexity', 'N/A'):.3f}")
+print(f"  Max Entropy: {base_result['first_pass'].get('max_entropy', 'N/A'):.3f}")
+print(f"  High Uncertainty Tokens: {base_result['first_pass'].get('high_uncertainty_tokens', 'N/A')}")
+print(f"  Refinement: {'✓ Triggered' if base_result['refinement']['enabled'] else '✗ Not needed'}")
+if base_result['refinement']['enabled']:
+    print(f"  Triggered by: {base_result['refinement'].get('triggered_by', 'N/A')}")
+print(f"  Cost: ${base_result['usage'].get('estimated_cost_usd', 0):.4f}")
+
+# Run with reasoning model for comparison
+print("\n▶ o4-mini (reasoning model):")
+reasoning_result = answer_difficult_question_with_uncertainty(
+    test_question,
+    model="o4-mini",
+    top_k=5,
+    threshold=1.4,
+    temperature=0.2,
+)
+
+# Truncate answer for display
+reason_answer_preview = reasoning_result.get('final_answer', '')[:300] + "..." if len(reasoning_result.get('final_answer', '')) > 300 else reasoning_result.get('final_answer', '')
+print(f"  Answer: {reason_answer_preview}")
+print(f"  Cost: ${reasoning_result['usage'].get('estimated_cost_usd', 0):.4f}")
+
+# Compare efficiency
+if reasoning_result['usage'].get('estimated_cost_usd', 0) > 0:
+    cost_ratio = base_result['usage'].get('estimated_cost_usd', 0) / reasoning_result['usage'].get('estimated_cost_usd', 1)
+    print(f"\n  💰 Cost efficiency: {cost_ratio:.1%} of reasoning model cost")
+
+print("\n" + "="*60)
+print("✅ Check Weave UI for detailed analysis of logprobs and uncertainty metrics!")
+print("="*60)
