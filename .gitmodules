@@ -1,0 +1,3 @@
+[submodule "polyfile-weave"]
+	path = polyfile-weave
+	url = https://github.com/andrewmonostate/polyfile-weave.git

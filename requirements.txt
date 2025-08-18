@@ -1,6 +1,15 @@
 # Core dependencies
 openai>=1.0.0
+# Using local fixed version of polyfile-weave (included as vendorized dependency)
+-e ./polyfile-weave
+
+# Standard Weave package
 weave>=0.50.0
+
+# Use gql 4.x (our runtime patch makes it compatible)
+# See: https://github.com/wandb/weave/pull/new/fix/gql-4-compatibility-and-dependency-separation
+gql>=4.0.0
+
 jupytext>=1.14.0
 
 # Optional for Colab/Kaggle environments
@@ -8,7 +17,5 @@ set-env-colab-kaggle-dotenv>=0.1.0
 
 # For W&B integration (optional)
 wandb>=0.16.0
+# Note: We apply a runtime patch to make Weave work with gql 4.x
 
-# Note: If you encounter TypeError with weave.init(), try:
-# pip install gql==3.4.1
-# or simply run without Weave tracking (the notebook handles this automatically)

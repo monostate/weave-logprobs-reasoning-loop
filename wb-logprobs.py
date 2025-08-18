@@ -11,21 +11,59 @@
 # Prereqs: set `OPENAI_API_KEY` in your environment and install `weave` and `openai`.
 
 # %%
-# %%capture
-# !pip install weave openai set-env-colab-kaggle-dotenv
+# Install dependencies - handles both local and cloud environments
+import subprocess
+import sys
+from pathlib import Path
+
+# Check if we're in a local environment with vendorized polyfile-weave
+local_polyfile = Path("./polyfile-weave")
+if local_polyfile.exists() and local_polyfile.is_dir():
+    print("Found local polyfile-weave, installing from vendorized source...")
+    # Install local polyfile-weave first (with fixes for Python 3.9+ compatibility)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "-e", "./polyfile-weave"])
+    print("✓ Installed local polyfile-weave")
+
+# Install remaining dependencies
+try:
+    import weave
+    import openai
+    import packaging
+    print("✓ Required packages already installed")
+except ImportError:
+    print("Installing required packages...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "weave", "openai", "packaging", "gql>=4.0.0", "set-env-colab-kaggle-dotenv"])
+    print("✓ Installed required packages")
 
 # %%
-
 # Set your OpenAI API key
-from set_env import set_env
+import os
+from pathlib import Path
+
+# Try to load from .env file if it exists
+env_file = Path(".env")
+if env_file.exists():
+    with open(env_file) as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                key, value = line.strip().split("=", 1)
+                os.environ[key] = value
+
+# For notebooks, try set_env if available
+try:
+    from set_env import set_env
+    _ = set_env("OPENAI_API_KEY")
+except ImportError:
+    pass
 
 # %%
-# Put your OPENAI_API_KEY in the secrets panel to the left 🗝️
-_ = set_env("OPENAI_API_KEY")
-# os.environ["OPENAI_API_KEY"] = "sk-..." # alternatively, put your key here
+# Ensure OPENAI_API_KEY is set
+if not os.environ.get("OPENAI_API_KEY"):
+    print("Warning: OPENAI_API_KEY not set. Please set it in your environment or .env file")
+    print("Example: export OPENAI_API_KEY='sk-...'")
 
 # %%
-PROJECT = "weave-intro-notebook"
+PROJECT = os.environ.get("WEAVE_PROJECT", "weave-intro-notebook")
 
 # %% [markdown]
 # ## What we'll build
@@ -46,28 +84,77 @@ import weave
 import os
 
 # %%
-# Initialize Weave with error handling for compatibility issues
-try:
-    weave.init(PROJECT)
-    print(f"Weave initialized with project: {PROJECT}")
-except TypeError as e:
-    # Fallback for compatibility issues with gql library
-    print(f"Note: Weave initialization encountered an issue: {e}")
-    print("Attempting alternative initialization...")
+# Apply runtime patch for gql 4.x compatibility by patching gql.Client directly
+def patch_gql_client_for_v4():
+    """
+    Monkey-patch gql.Client.execute to handle the signature change between v3 and v4.
+    This is a more direct approach that doesn't require modifying Weave's internal structure.
+    """
     try:
-        # Try with explicit entity/project format
-        import wandb
-        entity = os.environ.get("WANDB_ENTITY", wandb.api.default_entity())
-        if entity:
-            weave.init(f"{entity}/{PROJECT}")
-        else:
-            # Run without W&B integration
-            print("Running without full Weave tracking. Results will be local only.")
-            os.environ["WEAVE_DISABLED"] = "true"
-    except Exception as fallback_error:
-        print(f"Weave tracking disabled due to: {fallback_error}")
-        print("The notebook will run but without experiment tracking.")
-        os.environ["WEAVE_DISABLED"] = "true"
+        import gql
+        from gql import Client
+        from packaging import version
+        
+        # Check gql version
+        GQL_VERSION = version.parse(gql.__version__ if hasattr(gql, '__version__') else '3.0.0')
+        GQL_V4_PLUS = GQL_VERSION >= version.parse('4.0.0')
+        
+        print(f"Detected gql version: {GQL_VERSION}")
+        
+        if not GQL_V4_PLUS:
+            print("gql 3.x detected, no patch needed")
+            return True
+        
+        # Store original execute methods
+        from gql.client import SyncClientSession, AsyncClientSession
+        
+        _orig_sync_execute = SyncClientSession.execute
+        _orig_async_execute = AsyncClientSession.execute
+        
+        # Create wrapper that handles both call signatures
+        def patched_sync_execute(self, document, *args, **kwargs):
+            """Wrapper that accepts both v3 and v4 call signatures"""
+            # If called with positional args (v3 style), convert to v4 style
+            if args and 'variable_values' not in kwargs:
+                # v3 style: execute(query, variables)
+                kwargs['variable_values'] = args[0]
+                return _orig_sync_execute(self, document, **kwargs)
+            else:
+                # v4 style or no variables
+                return _orig_sync_execute(self, document, *args, **kwargs)
+        
+        async def patched_async_execute(self, document, *args, **kwargs):
+            """Async wrapper that accepts both v3 and v4 call signatures"""
+            # If called with positional args (v3 style), convert to v4 style
+            if args and 'variable_values' not in kwargs:
+                # v3 style: execute(query, variables)
+                kwargs['variable_values'] = args[0]
+                return await _orig_async_execute(self, document, **kwargs)
+            else:
+                # v4 style or no variables
+                return await _orig_async_execute(self, document, *args, **kwargs)
+        
+        # Apply patches
+        SyncClientSession.execute = patched_sync_execute
+        AsyncClientSession.execute = patched_async_execute
+        
+        print("✓ Patched gql.Client for v3/v4 compatibility")
+        return True
+        
+    except ImportError as e:
+        print(f"ERROR: Could not import gql modules: {e}")
+        raise RuntimeError(f"Failed to apply gql patch: {e}")
+    except Exception as e:
+        print(f"ERROR: Failed to patch gql.Client: {e}")
+        raise RuntimeError(f"Failed to apply gql patch: {e}")
+
+# Apply the patch BEFORE initializing Weave
+patch_gql_client_for_v4()
+
+# %%
+# Initialize Weave - REQUIRED for tracking
+weave.init(PROJECT)
+print(f"✓ Weave initialized with project: {PROJECT}")
 
 # %%
 client = OpenAI()
@@ -87,6 +174,7 @@ def _extract_text_and_logprobs(resp):
     text = getattr(resp, "output_text", None) or ""
     token_logprobs = []
     topk_by_pos = []
+    tokens = []  # Store actual token text
 
     outputs = data.get("output") or data.get("outputs") or []
     if isinstance(outputs, list):
@@ -96,54 +184,146 @@ def _extract_text_and_logprobs(resp):
             for content in item.get("content", []) or []:
                 if not isinstance(content, dict):
                     continue
-                logprobs_payload = None
-                if "output_text" in content and isinstance(content["output_text"], dict):
-                    inner = content["output_text"]
-                    text = inner.get("text", text)
-                    logprobs_payload = inner.get("logprobs")
-                else:
-                    if "text" in content:
-                        text = content.get("text", text)
-                    logprobs_payload = content.get("logprobs")
-
-                if isinstance(logprobs_payload, dict):
-                    raw_lps = logprobs_payload.get("token_logprobs") or []
-                    if isinstance(raw_lps, list):
-                        token_logprobs = [float(x) for x in raw_lps if x is not None]
-                    raw_top = logprobs_payload.get("top_logprobs")
-                    if isinstance(raw_top, list):
-                        parsed = []
-                        for pos in raw_top:
+                
+                # Extract text
+                if "text" in content:
+                    text = content.get("text", text)
+                
+                # NEW: Handle the actual API format - logprobs is a LIST, not a dict!
+                logprobs_list = content.get("logprobs")
+                if isinstance(logprobs_list, list):
+                    # Each item has: token, logprob, top_logprobs
+                    for token_data in logprobs_list:
+                        if isinstance(token_data, dict):
+                            # Extract this token's logprob
+                            token_text = token_data.get("token", "")
+                            token_lp = token_data.get("logprob")
+                            if token_lp is not None:
+                                token_logprobs.append(float(token_lp))
+                                tokens.append(token_text)
+                            
+                            # Extract top-k alternatives for this position
+                            top_alts = token_data.get("top_logprobs", [])
                             alts = []
-                            if isinstance(pos, list):
-                                for alt in pos:
+                            if isinstance(top_alts, list):
+                                for alt in top_alts:
                                     if isinstance(alt, dict):
-                                        tok = alt.get("token") or alt.get("text") or ""
-                                        lp = alt.get("logprob")
-                                        if lp is not None:
-                                            alts.append((str(tok), float(lp)))
-                            parsed.append(alts)
-                        topk_by_pos = parsed
+                                        alt_token = alt.get("token", "")
+                                        alt_lp = alt.get("logprob")
+                                        if alt_lp is not None:
+                                            alts.append((alt_token, float(alt_lp)))
+                            topk_by_pos.append(alts)
 
-    return text, token_logprobs, topk_by_pos
+    # Return tokens as well for better analysis
+    return text, token_logprobs, topk_by_pos, tokens
 
 # %%
 def _perplexity(token_logprobs):
     if not token_logprobs:
-        return float("inf")
-    return math.exp(-sum(token_logprobs) / max(1, len(token_logprobs)))
+        # No logprobs means we can't calculate perplexity - don't trigger refinement
+        return 0.0  # Low perplexity = high confidence
+    if len(token_logprobs) == 0:
+        return 0.0
+    avg_logprob = sum(token_logprobs) / len(token_logprobs)
+    # Perplexity = exp(-avg_logprob)
+    # Lower perplexity = more confident
+    # Higher perplexity = more uncertain
+    return math.exp(-avg_logprob)
 
 # %%
-def _uncertainty_report(token_logprobs, topk_by_pos, max_positions=5):
+def _calculate_entropy(top_k_alternatives):
+    """Calculate entropy from top-k alternatives at a position.
+    Higher entropy = more uncertainty about which token to choose.
+    """
+    if not top_k_alternatives:
+        return 0.0
+    
+    # Convert logprobs to probabilities
+    probs = []
+    for token, logprob in top_k_alternatives:
+        probs.append(math.exp(logprob))
+    
+    # Normalize (they should sum to ~1 already for top token)
+    total = sum(probs)
+    if total == 0:
+        return 0.0
+    probs = [p/total for p in probs]
+    
+    # Calculate entropy: -sum(p * log(p))
+    entropy = 0.0
+    for p in probs:
+        if p > 0:
+            entropy -= p * math.log(p)
+    return entropy
+
+def _uncertainty_report(token_logprobs, topk_by_pos, tokens=None, max_positions=10):
     if not token_logprobs:
         return "No token-level logprob info available."
+    
+    # Calculate entropy for each position
+    entropies = []
+    for i, alts in enumerate(topk_by_pos):
+        if i < len(token_logprobs):
+            entropies.append(_calculate_entropy(alts))
+    
+    # Calculate statistics
+    avg_entropy = sum(entropies) / len(entropies) if entropies else 0
+    max_entropy = max(entropies) if entropies else 0
+    low_confidence_count = sum(1 for lp in token_logprobs if math.exp(lp) < 0.5)
+    very_low_confidence_count = sum(1 for lp in token_logprobs if math.exp(lp) < 0.2)
+    
+    # Find most uncertain positions
     indices = list(range(len(token_logprobs)))
+    # Sort by LOWEST logprob (most uncertain)
     indices.sort(key=lambda i: token_logprobs[i])
+    
     lines = []
-    for idx in indices[:max_positions]:
+    lines.append("=== UNCERTAINTY ANALYSIS ===")
+    lines.append(f"Total tokens: {len(token_logprobs)}")
+    lines.append(f"Average entropy: {avg_entropy:.2f}")
+    lines.append(f"Maximum entropy: {max_entropy:.2f}")
+    lines.append(f"Low confidence tokens (<50%): {low_confidence_count}")
+    lines.append(f"Very low confidence tokens (<20%): {very_low_confidence_count}")
+    lines.append("")
+    
+    # Group uncertain tokens with context
+    lines.append(f"Most uncertain tokens (top {min(max_positions, len(indices))}):")
+    for rank, idx in enumerate(indices[:max_positions], 1):
+        token_text = tokens[idx] if tokens and idx < len(tokens) else f"[pos {idx}]"
+        lp = token_logprobs[idx]
+        prob = math.exp(lp) * 100  # Convert to percentage
+        entropy = entropies[idx] if idx < len(entropies) else 0.0
+        
+        # Get surrounding context (2 tokens before and after)
+        context_before = ""
+        context_after = ""
+        if tokens:
+            start = max(0, idx - 2)
+            end = min(len(tokens), idx + 3)
+            context_tokens = tokens[start:end]
+            context_before = "".join(tokens[start:idx])
+            context_after = "".join(tokens[idx+1:end])
+        
+        lines.append(f"\n  {rank}. Token: '{token_text}' (position {idx})")
+        lines.append(f"     Context: ...{context_before}[{token_text}]{context_after}...")
+        lines.append(f"     Confidence: {prob:.1f}%, Entropy: {entropy:.2f}")
+        
         alts = topk_by_pos[idx] if idx < len(topk_by_pos) else []
-        formatted = ", ".join(f"{tok} ({lp:.2f})" for tok, lp in alts)
-        lines.append(f"pos {idx}: lp={token_logprobs[idx]:.2f}; alts: {formatted}")
+        if alts:
+            top_alts = []
+            for tok, alt_lp in alts[:5]:  # Show top 5 alternatives
+                alt_prob = math.exp(alt_lp) * 100
+                top_alts.append(f"'{tok}' ({alt_prob:.1f}%)")
+            lines.append(f"     Alternatives: {', '.join(top_alts)}")
+    
+    lines.append("\n=== KEY INSIGHTS ===")
+    if very_low_confidence_count > 0:
+        lines.append("- Multiple tokens with very low confidence detected")
+    if max_entropy > 2.0:
+        lines.append("- High entropy indicates multiple equally viable options")
+    if low_confidence_count > len(token_logprobs) * 0.2:
+        lines.append("- Over 20% of tokens have low confidence")
+    
     return "\n".join(lines)
 
 # %%
@@ -260,17 +440,10 @@ def _extract_reasoning_metadata(resp):
 
 # %%
 @weave.op()
-def answer_difficult_question_with_uncertainty(
-    question: str,
-    model: str = "gpt-4.1-mini",
-    top_k: int = 5,
-    threshold: float = 1.4,
-    temperature: float = 0.2,
-):
-    t0 = time.perf_counter()
-    
-    # Reasoning models (o1, o4) don't support temperature or logprobs
-    is_reasoning_model = model.startswith(('o1', 'o4'))
+def first_pass_generation(question: str, model: str, temperature: float, top_k: int, is_reasoning_model: bool):
+    """Generate initial response and extract logprobs/uncertainty metrics"""
+    t_start = time.perf_counter()
+    print(f"  [FIRST PASS] Starting generation with {model}...")
     
     create_params = {
         "model": model,
@@ -284,56 +457,183 @@ def answer_difficult_question_with_uncertainty(
         create_params["top_logprobs"] = top_k
         create_params["include"] = ["message.output_text.logprobs"]
     
-    resp1 = client.responses.create(**create_params)
+    print(f"  [FIRST PASS] Calling OpenAI API...")
+    api_start = time.perf_counter()
+    resp = client.responses.create(**create_params)
+    api_end = time.perf_counter()
+    print(f"  [FIRST PASS] API call took {api_end - api_start:.2f}s")
+    
+    print(f"  [FIRST PASS] Extracting metrics...")
+    text, token_lps, topk_alts, tokens = _extract_text_and_logprobs(resp)
+    in_tok, out_tok = _extract_usage(resp)
+    ppx = _perplexity(token_lps)
+    avg_lp = (sum(token_lps) / len(token_lps)) if token_lps else None
+    table = _uncertainty_table(token_lps, topk_alts, max_positions=5)
+    
+    t_end = time.perf_counter()
+    print(f"  [FIRST PASS] Total time: {t_end - t_start:.2f}s (tokens: {len(token_lps)}, perplexity: {ppx:.2f})")
+    
+    # Log ALL metrics to Weave
+    return {
+        "response": resp,
+        "text": text,
+        "tokens": tokens,  # NEW: actual token text
+        "token_logprobs": token_lps,
+        "top_k_alternatives": topk_alts,
+        "perplexity": ppx,
+        "avg_logprob": avg_lp,
+        "uncertainty_table": table,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+    }
 
-    text1, token_lps1, topk1 = _extract_text_and_logprobs(resp1)
-    in_tok1, out_tok1 = _extract_usage(resp1)
-    ppx1 = _perplexity(token_lps1)
-    avg_lp1 = (sum(token_lps1) / len(token_lps1)) if token_lps1 else None
-    table1 = _uncertainty_table(token_lps1, topk1, max_positions=5)
+@weave.op()
+def refinement_pass(question: str, draft_answer: str, model: str, temperature: float, 
+                    top_k: int, ppx: float, token_lps: list, topk_alts: list, tokens: list):
+    """Refine answer based on uncertainty analysis"""
+    t_start = time.perf_counter()
+    print(f"  [REFINEMENT] Starting refinement (perplexity was {ppx:.2f})...")
+    
+    analysis = _uncertainty_report(token_lps, topk_alts, tokens=tokens, max_positions=10)
+    refined_input = (
+        "You previously drafted an answer to a difficult question. "
+        "Analysis shows you were uncertain about specific parts of your response.\n\n"
+        f"Original Question: {question}\n\n"
+        f"Your Draft Answer:\n{draft_answer}\n\n"
+        f"Detailed Uncertainty Analysis (perplexity={ppx:.3f}):\n{analysis}\n\n"
+        "REFINEMENT INSTRUCTIONS:\n"
+        "1. Review the uncertain tokens and their alternatives\n"
+        "2. Consider if any alternatives would be more accurate\n"
+        "3. Pay special attention to tokens with <50% confidence\n"
+        "4. For high-entropy tokens, choose the most factually accurate option\n"
+        "5. Maintain the same structure but improve uncertain parts\n\n"
+        "Provide a refined answer that resolves these uncertainties. "
+        "Do not mention this analysis process in your response."
+    )
+    
+    print(f"  [REFINEMENT] Input length: {len(refined_input)} chars")
+    
+    refine_params = {
+        "model": model,
+        "instructions": "You are a precise cryptography expert. Be concise and accurate.",
+        "input": refined_input,
+        "temperature": max(0.0, temperature - 0.1),
+        "top_logprobs": top_k,
+        "include": ["message.output_text.logprobs"]
+    }
+    
+    print(f"  [REFINEMENT] Calling OpenAI API...")
+    api_start = time.perf_counter()
+    resp = client.responses.create(**refine_params)
+    api_end = time.perf_counter()
+    print(f"  [REFINEMENT] API call took {api_end - api_start:.2f}s")
+    
+    print(f"  [REFINEMENT] Extracting metrics...")
+    text, token_lps, topk_alts, tokens = _extract_text_and_logprobs(resp)
+    in_tok, out_tok = _extract_usage(resp)
+    ppx = _perplexity(token_lps)
+    avg_lp = (sum(token_lps) / len(token_lps)) if token_lps else None
+    table = _uncertainty_table(token_lps, topk_alts, max_positions=5)
+    
+    t_end = time.perf_counter()
+    print(f"  [REFINEMENT] Total time: {t_end - t_start:.2f}s (new perplexity: {ppx:.2f})")
+    
+    return {
+        "response": resp,
+        "text": text,
+        "tokens": tokens,  # NEW: actual token text
+        "token_logprobs": token_lps,
+        "perplexity": ppx,
+        "avg_logprob": avg_lp,
+        "uncertainty_table": table,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "uncertainty_analysis": analysis,
+    }
+
+@weave.op()
+def answer_difficult_question_with_uncertainty(
+    question: str,
+    model: str = "gpt-4.1-mini",
+    top_k: int = 5,
+    threshold: float = 1.4,
+    temperature: float = 0.2,
+):
+    t0 = time.perf_counter()
+    print(f"\n[MAIN] Starting uncertainty-aware generation for: '{question[:50]}...'")
+    print(f"[MAIN] Model: {model}, Threshold: {threshold}")
+    
+    # Reasoning models (o1, o4) don't support temperature or logprobs
+    is_reasoning_model = model.startswith(('o1', 'o4'))
+    
+    # First pass generation
+    print(f"[MAIN] Starting first pass...")
+    first_pass = first_pass_generation(question, model, temperature, top_k, is_reasoning_model)
+    print(f"[MAIN] First pass complete.")
+    resp1 = first_pass["response"]
+
+    text1 = first_pass["text"]
+    tokens1 = first_pass.get("tokens", [])  # Extract tokens
+    token_lps1 = first_pass["token_logprobs"]
+    topk1 = first_pass["top_k_alternatives"]
+    in_tok1 = first_pass["input_tokens"]
+    out_tok1 = first_pass["output_tokens"]
+    ppx1 = first_pass["perplexity"]
+    avg_lp1 = first_pass["avg_logprob"]
+    table1 = first_pass["uncertainty_table"]
 
     did_refine = False
     final_text = text1
+    refinement_data = None
     ppx2 = None
     avg_lp2 = None
+    table2 = None
+    in_tok2, out_tok2 = None, None
 
+    # Calculate additional uncertainty metrics for better decision
+    max_entropy = 0.0
+    high_uncertainty_tokens = 0
+    if token_lps1 and topk1:
+        for i, (lp, alts) in enumerate(zip(token_lps1, topk1)):
+            entropy = _calculate_entropy(alts)
+            max_entropy = max(max_entropy, entropy)
+            # Count tokens with <50% confidence
+            if math.exp(lp) < 0.5:
+                high_uncertainty_tokens += 1
+    
     # Skip refinement for reasoning models (no logprobs available)
-    if ppx1 > threshold and not is_reasoning_model:
+    print(f"[MAIN] Checking if refinement needed...")
+    print(f"  - Perplexity: {ppx1:.2f} (threshold: {threshold})")
+    print(f"  - Max entropy: {max_entropy:.2f}")
+    print(f"  - High uncertainty tokens: {high_uncertainty_tokens}")
+    
+    # Refine if ANY uncertainty metric is high
+    should_refine = (
+        (ppx1 > threshold) or 
+        (max_entropy > 1.5) or  # High entropy = multiple viable options
+        (high_uncertainty_tokens >= 3)  # Multiple uncertain tokens
+    )
+    
+    if should_refine and not is_reasoning_model:
+        print(f"[MAIN] Refinement triggered! Starting refinement pass...")
         did_refine = True
-        analysis = _uncertainty_report(token_lps1, topk1, max_positions=5)
-        refined_input = (
-            "You previously drafted an answer to a difficult question.\n"
-            f"Question: {question}\n\n"
-            f"Your draft answer:\n{text1}\n\n"
-            f"Uncertainty analysis (perplexity={ppx1:.3f}):\n{analysis}\n\n"
-            "Revise the answer to improve factual accuracy and clarity, resolving uncertain parts. "
-            "Do not mention this analysis in the final answer."
+        refinement_data = refinement_pass(
+            question, text1, model, temperature, top_k, ppx1, token_lps1, topk1, tokens1
         )
-
-        refine_params = {
-            "model": model,
-            "instructions": "You are a precise cryptography expert. Be concise and accurate.",
-            "input": refined_input,
-        }
         
-        # Only add temperature and logprobs for non-reasoning models
-        if not is_reasoning_model:
-            refine_params["temperature"] = max(0.0, temperature - 0.1)
-            refine_params["top_logprobs"] = top_k
-            refine_params["include"] = ["message.output_text.logprobs"]
-        
-        resp2 = client.responses.create(**refine_params)
-
-        text2, token_lps2, _ = _extract_text_and_logprobs(resp2)
-        in_tok2, out_tok2 = _extract_usage(resp2)
-        ppx2 = _perplexity(token_lps2)
-        avg_lp2 = (sum(token_lps2) / len(token_lps2)) if token_lps2 else None
+        text2 = refinement_data["text"]
+        ppx2 = refinement_data["perplexity"]
+        avg_lp2 = refinement_data["avg_logprob"]
         final_text = text2
-        table2 = _uncertainty_table(token_lps2, topk1, max_positions=5)
+        table2 = refinement_data["uncertainty_table"]
+        in_tok2 = refinement_data["input_tokens"]
+        out_tok2 = refinement_data["output_tokens"]
+        print(f"[MAIN] Refinement complete.")
     else:
-        table2 = None
-        in_tok2, out_tok2 = None, None
+        print(f"[MAIN] No refinement needed (ppx={ppx1:.2f} <= {threshold} or reasoning model)")
+    
     t1 = time.perf_counter()
+    print(f"[MAIN] TOTAL TIME: {t1 - t0:.2f}s")
 
     # Attach a concise summary to the Weave call for easy inspection in the UI
     try:
@@ -349,9 +649,12 @@ def answer_difficult_question_with_uncertainty(
                 "token_count": len(token_lps1),
                 "avg_logprob": avg_lp1,
                 "perplexity": ppx1,
+                "max_entropy": max_entropy,
+                "high_uncertainty_tokens": high_uncertainty_tokens,
             },
             "refinement": {
                 "enabled": did_refine,
+                "triggered_by": "perplexity" if ppx1 > threshold else ("entropy" if max_entropy > 1.5 else "uncertain_tokens"),
                 "avg_logprob_after": avg_lp2,
                 "perplexity_after": ppx2,
             },
@@ -373,12 +676,15 @@ def answer_difficult_question_with_uncertainty(
             "answer": text1,
             "avg_logprob": avg_lp1,
             "perplexity": ppx1,
+            "max_entropy": max_entropy,
+            "high_uncertainty_tokens": high_uncertainty_tokens,
             "uncertainty_table": table1,
             "input_tokens": in_tok1,
             "output_tokens": out_tok1,
         },
         "refinement": {
             "enabled": did_refine,
+            "triggered_by": "perplexity" if did_refine and ppx1 > threshold else ("entropy" if did_refine and max_entropy > 1.5 else ("uncertain_tokens" if did_refine else None)),
             "perplexity_after": ppx2,
             "avg_logprob_after": avg_lp2,
             "uncertainty_table_after": table2,
@@ -471,3 +777,60 @@ print(
 # 
 # This notebook now focuses on the Weave-logged uncertainty-aware generation loop using the OpenAI Responses API.
 # Use the Weave UI links to explore traces, inputs/outputs, and compare iterations.
+
+# %%
+# Main execution block
+if __name__ == "__main__":
+    import sys
+    
+    # Check if running as a script (not in notebook)
+    if 'ipykernel' not in sys.modules:
+        print("Running uncertainty-aware generation analysis...\n")
+        
+        # Test with different types of questions
+        test_questions = [
+            "Is artificial general intelligence likely to be achieved by 2030?",  # Controversial prediction
+            "What are the ethical implications of human genetic enhancement?",  # Complex ethical question
+            "Should cryptocurrency replace traditional banking systems?",  # Controversial opinion
+        ]
+        
+        for question in test_questions:
+            print(f"\n{'='*60}")
+            print(f"Question: {question}")
+            print('='*60)
+            
+            # Run with non-reasoning model (uncertainty loop)
+            print("\n▶ GPT-4.1-mini with uncertainty loop:")
+            base_result = answer_difficult_question_with_uncertainty(
+                question,
+                model="gpt-4.1-mini",
+                top_k=5,
+                threshold=1.4,
+                temperature=0.2,
+            )
+            
+            print(f"  Answer: {base_result.get('final_answer', '')}")
+            print(f"  Perplexity: {base_result['first_pass'].get('perplexity', 'N/A'):.3f}")
+            print(f"  Refinement: {'✓ Triggered' if base_result['refinement']['enabled'] else '✗ Not needed'}")
+            print(f"  Cost: ${base_result['usage'].get('estimated_cost_usd', 0):.4f}")
+            
+            # Run with reasoning model for comparison
+            print("\n▶ o4-mini (reasoning model):")
+            reasoning_result = answer_difficult_question_with_uncertainty(
+                question,
+                model="o4-mini",
+                top_k=5,
+                threshold=1.4,
+                temperature=0.2,
+            )
+            
+            print(f"  Answer: {reasoning_result.get('final_answer', '')}")
+            print(f"  Cost: ${reasoning_result['usage'].get('estimated_cost_usd', 0):.4f}")
+            
+            # Compare efficiency
+            cost_ratio = base_result['usage'].get('estimated_cost_usd', 0) / reasoning_result['usage'].get('estimated_cost_usd', 1)
+            print(f"\n  💰 Cost efficiency: {cost_ratio:.1%} of reasoning model cost")
+        
+        print("\n" + "="*60)
+        print("✅ Check Weave UI for detailed analysis of logprobs and uncertainty metrics!")
+        print("="*60)
